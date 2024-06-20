@@ -1,0 +1,25 @@
+allprojects {
+  repositories {
+    google()
+    mavenCentral()
+    maven {
+        url "https://cardinalcommerceprod.jfrog.io/artifactory/android"
+        credentials {
+          username '' // Artifactory username
+          password '' // Artifactory API Key
+        }
+    }
+  }
+}
+
+rootProject.buildDir = "../build"
+subprojects {
+  project.buildDir = "${rootProject.buildDir}/${project.name}"
+}
+subprojects {
+  project.evaluationDependsOn(":app")
+}
+
+tasks.register("clean", Delete) {
+  delete rootProject.buildDir
+}
