@@ -12,7 +12,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   static const platform = MethodChannel('com.holu.cardinal/cardinal');
-  
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -35,12 +35,12 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   payment() async {
-        try {
-      final String result = await platform.invokeMethod('configureCardinal');
-      log(result);
+    const serverJwt = "";
+    try {
+      final String consumerSessionId = await platform.invokeMethod('configureCardinal', {'serverJwt': serverJwt});
+      log("Consumer Session ID: $consumerSessionId");
     } on PlatformException catch (e) {
       log("Failed to configure Cardinal: '${e.message}'.");
     }
-
   }
 }

@@ -2,13 +2,6 @@ allprojects {
   repositories {
     google()
     mavenCentral()
-    maven {
-        url "https://cardinalcommerceprod.jfrog.io/artifactory/android"
-        credentials {
-          username '' // Artifactory username
-          password '' // Artifactory API Key
-        }
-    }
   }
 }
 
