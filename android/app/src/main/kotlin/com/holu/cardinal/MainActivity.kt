@@ -1,45 +1,50 @@
 package com.holu.cardinal
 
-import android.content.Intent
+import android.app.Activity
+import android.content.Context
+import android.os.Bundle
 import com.cardinalcommerce.cardinalmobilesdk.Cardinal
 import com.cardinalcommerce.cardinalmobilesdk.enums.CardinalEnvironment
 import com.cardinalcommerce.cardinalmobilesdk.enums.CardinalRenderType
 import com.cardinalcommerce.cardinalmobilesdk.enums.CardinalUiType
+import com.cardinalcommerce.cardinalmobilesdk.models.CardinalActionCode
 import com.cardinalcommerce.cardinalmobilesdk.models.CardinalConfigurationParameters
 import com.cardinalcommerce.cardinalmobilesdk.models.ValidateResponse
 import com.cardinalcommerce.cardinalmobilesdk.services.CardinalInitService
-import com.cardinalcommerce.shared.userinterfaces.*
+import com.cardinalcommerce.cardinalmobilesdk.services.CardinalValidateReceiver
+import com.cardinalcommerce.shared.userinterfaces.UiCustomization
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import org.json.JSONArray
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
-import kotlinx.coroutines.*
-import org.json.JSONArray
-// import org.json.JSONObject
+import com.holu.cardinal.Validated3DSResponse
 
 class MainActivity : FlutterFragmentActivity() {
   private val CHANNEL = "com.holu.cardinal/cardinal"
-
-  private lateinit var cardinal: Cardinal
+  private val cardinal = Cardinal.getInstance()
 
   override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
     super.configureFlutterEngine(flutterEngine)
 
-    MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler {
-        call,
-        result ->
+    MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
       when (call.method) {
         "configureCardinal" -> {
           val serverJwt = call.argument<String>("serverJwt")
           if (serverJwt != null && serverJwt.isNotEmpty()) {
             CoroutineScope(Dispatchers.Main).launch {
               try {
-                val consumerSessionId = configureCardinal(serverJwt)
+                val consumerSessionId = Secure3DS().init3DSecure(this@MainActivity, serverJwt, isTest = true) // Cambia isTest según sea necesario
                 result.success(consumerSessionId)
               } catch (e: Exception) {
-                result.error("CONFIGURATION_ERROR", "Failed to configure Cardinal", e.message)
+                result.error("CONFIGURATION_ERROR", e.message, null)
               }
             }
           } else {
@@ -53,15 +58,15 @@ class MainActivity : FlutterFragmentActivity() {
           val transactionId = call.argument<String>("transactionId")
           val payload = call.argument<String>("payload")
 
-          if (threeDSVersion != null && enrolled != null && paResStatus != null) {
-            handleAuthenticationResponse(
-                threeDSVersion,
-                enrolled,
-                paResStatus,
-                transactionId,
-                payload
-            )
-            result.success(null)
+          if (threeDSVersion != null && enrolled != null && paResStatus != null && transactionId != null && payload != null) {
+            CoroutineScope(Dispatchers.Main).launch {
+              try {
+                val authResult = Secure3DS().validate(this@MainActivity, transactionId, payload)
+                result.success(authResult.toString())
+              } catch (e: Exception) {
+                result.error("AUTHENTICATION_ERROR", e.message, null)
+              }
+            }
           } else {
             result.error("INVALID_ARGUMENT", "Missing required fields", null)
           }
@@ -70,100 +75,74 @@ class MainActivity : FlutterFragmentActivity() {
       }
     }
   }
+}
 
-  private suspend fun configureCardinal(serverJwt: String): String =
-      suspendCoroutine { continuation ->
-        cardinal = Cardinal.getInstance()
+class Secure3DS {
+  private val cardinal: Cardinal = Cardinal.getInstance()
 
-        val cardinalConfigurationParameters = CardinalConfigurationParameters()
-        cardinalConfigurationParameters.environment = CardinalEnvironment.STAGING
-        cardinalConfigurationParameters.requestTimeout = 8000
-        cardinalConfigurationParameters.challengeTimeout = 5
+  suspend fun init3DSecure(context: Context, jwt: String, isTest: Boolean): String {
+    val cardinalConfigurationParameters = CardinalConfigurationParameters()
 
-        val rTYPE = JSONArray()
-        rTYPE.put(CardinalRenderType.OTP)
-        rTYPE.put(CardinalRenderType.SINGLE_SELECT)
-        rTYPE.put(CardinalRenderType.MULTI_SELECT)
-        rTYPE.put(CardinalRenderType.OOB)
-        rTYPE.put(CardinalRenderType.HTML)
-        cardinalConfigurationParameters.renderType = rTYPE
-
-        cardinalConfigurationParameters.uiType = CardinalUiType.BOTH
-        cardinalConfigurationParameters.isLocationDataConsentGiven = true
-
-        val yourUICustomizationObject = UiCustomization()
-        cardinalConfigurationParameters.uiCustomization = yourUICustomizationObject
-
-        cardinal.configure(this, cardinalConfigurationParameters)
-
-        cardinal.init(
-            serverJwt,
-            object : CardinalInitService {
-
-              override fun onSetupCompleted(consumerSessionId: String) {
-                println("Cardinal init setup completed. Consumer session ID: $consumerSessionId")
-                continuation.resume(consumerSessionId)
-              }
-
-              override fun onValidated(validateResponse: ValidateResponse, serverJwt: String?) {
-                if (serverJwt == null) {
-                  continuation.resumeWithException(
-                      Exception("Validation failed: ${validateResponse.errorDescription}")
-                  )
-                } else {
-                  println(
-                      "Cardinal init validated. Server JWT: $serverJwt, validateResponse: $validateResponse"
-                  )
-                }
-              }
-            }
-        )
-      }
-
-  private fun handleAuthenticationResponse(
-      threeDSVersion: String,
-      enrolled: String,
-      paResStatus: String,
-      transactionId: String?,
-      payload: String?
-  ) {
-    // Verificar que enrolled sea "Y" y que threeDSVersion empiece con "2"
-    if (enrolled != "Y" || !threeDSVersion.startsWith("2")) {
-      println("Authentication response does not meet requirements. Canceling operation.")
-      return
-    }
-    if (paResStatus == "Y") {
-      // Autenticación exitosa, procede con el siguiente paso en el flujo de pago
-      proceedWithPayment()
-    } else if (paResStatus == "C") {
-      // Se requiere un desafío adicional, inicia el desafío
-      if (transactionId != null && payload != null) {
-        startChallenge(transactionId, payload)
-      } else {
-        println("Missing transactionId or payload for challenge")
-      }
+    cardinalConfigurationParameters.environment = if (isTest) {
+      CardinalEnvironment.STAGING
     } else {
-      // Manejar otros casos de PAResStatus si es necesario
-      handleOtherPAResStatus(paResStatus)
+      CardinalEnvironment.PRODUCTION
+    }
+
+    cardinalConfigurationParameters.requestTimeout = 10000
+    cardinalConfigurationParameters.challengeTimeout = 5
+
+    val rTYPE = JSONArray().apply {
+      put(CardinalRenderType.OTP)
+      put(CardinalRenderType.SINGLE_SELECT)
+      put(CardinalRenderType.MULTI_SELECT)
+      put(CardinalRenderType.OOB)
+      put(CardinalRenderType.HTML)
+    }
+    cardinalConfigurationParameters.renderType = rTYPE
+    cardinalConfigurationParameters.uiType = CardinalUiType.BOTH
+
+    val customizationObject = UiCustomization()
+    cardinalConfigurationParameters.uiCustomization = customizationObject
+    cardinal.configure(context, cardinalConfigurationParameters)
+
+    return suspendCoroutine { cont ->
+      val service = object : CardinalInitService {
+        override fun onSetupCompleted(consumerSessionId: String) {
+          cont.resume(consumerSessionId)
+        }
+
+        override fun onValidated(validateResponse: ValidateResponse, jwt1: String?) {
+          cont.resumeWithException(Exception("Validation failed: ${validateResponse.errorDescription}"))
+        }
+      }
+
+      cardinal.init(jwt, service)
     }
   }
 
-  private fun proceedWithPayment() {
-    // Implementa la lógica para proceder con el pago
-    println("Procediendo con el pago...")
-  }
-
-  private fun startChallenge(transactionId: String, payload: String) {
-    val intent =
-        Intent(this, ChallengeActivity::class.java).apply {
-          putExtra("transactionId", transactionId)
-          putExtra("payload", payload.toString())
+    suspend fun validate(activity: Activity, transactionId: String, payload: String): Validated3DSResponse {
+      return suspendCoroutine<Validated3DSResponse> { continuation ->
+        val onValidateFinish = object : CardinalValidateReceiver {
+          override fun onValidated(currentContext: Context?, validateResponse: ValidateResponse, serverJWT: String?) {
+            val result = when (validateResponse.actionCode) {
+              CardinalActionCode.SUCCESS, CardinalActionCode.NOACTION -> "SUCCESS"
+              CardinalActionCode.ERROR -> "ERROR"
+              CardinalActionCode.FAILURE -> "FAILURE"
+              CardinalActionCode.CANCEL -> "CANCEL"
+              CardinalActionCode.TIMEOUT -> "TIMEOUT"
+              else -> "UNKNOWN"
+            }
+            continuation.resume(Validated3DSResponse(false, result))
+          }
         }
-    startActivity(intent)
-  }
 
-  private fun handleOtherPAResStatus(paResStatus: String) {
-
-    println("Manejo de otras PAResStatus: $paResStatus")
-  }
+        try {
+          cardinal.cca_continue(transactionId, payload, activity, onValidateFinish)
+        } catch (e: Exception) {
+          println("error ${e}");
+          continuation.resume(Validated3DSResponse(false, "ERROR"))
+        }
+      }
+    }
 }

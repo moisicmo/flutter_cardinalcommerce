@@ -39,23 +39,22 @@ class _HomeScreenState extends State<HomeScreen> {
 
   payment() async {
     const serverJwt =
-        "";
+        "..";
     try {
-      final String consumerSessionId = await platform.invokeMethod('configureCardinal', {'serverJwt': serverJwt});
-      log("Consumer Session ID: $consumerSessionId");
-      await sedData(consumerSessionId);
+      //solicitando referenceId a cardinal
+      final String referenceId = await platform.invokeMethod('configureCardinal', {'serverJwt': serverJwt});
+      log("Consumer Session ID: $referenceId");
+      await sedData(referenceId);
     } on PlatformException catch (e) {
-      log("Failed to configure Cardinal: '${e.message}'.");
+      log("Failed to Cardinal: '${e.message}'.");
     }
   }
 
   //enviando al backend el DFReferenceId
   sedData(String referenceId) async {
-    await CoffeApi.configureDio('http://localhost:8080/api/');
+    await CoffeApi.configureDio('http://1:8080/api/');
     String path = 'process-payment';
-    Object data = {
-      'DFReferenceId': referenceId,
-    };
+    Object data = {'DFReferenceId': referenceId};
     final res = await CoffeApi.post(path, data);
     if (res.data['CardinalMPI']['ErrorNo'] != '0') return;
 
@@ -64,13 +63,18 @@ class _HomeScreenState extends State<HomeScreen> {
     await prettyPrint('==PAResStatus==${res.data['CardinalMPI']['PAResStatus']}');
     await prettyPrint('==TransactionId==${res.data['CardinalMPI']['TransactionId']}');
     await prettyPrint('==Payload==${res.data['CardinalMPI']['Payload']}');
-
-    await platform.invokeMethod('handleAuthenticationResponse', {
+    // Verificar que enrolled sea "Y" y que threeDSVersion empiece con "2"
+    // if (enrolled != "Y" || !threeDSVersion.startsWith("2")) {
+    //   println("Authentication response does not meet requirements. Canceling operation.")
+    //   return
+    // }
+    final result = await platform.invokeMethod('handleAuthenticationResponse', {
       'threeDSVersion': res.data['CardinalMPI']['ThreeDSVersion'],
       'enrolled': res.data['CardinalMPI']['Enrolled'],
       'paResStatus': res.data['CardinalMPI']['PAResStatus'] is String ? res.data['CardinalMPI']['PAResStatus'] : "",
       'transactionId': res.data['CardinalMPI']['TransactionId'],
       'payload': json.encode(res.data['CardinalMPI']['Payload']),
     });
+    log("result: ${result.toString()}");
   }
 }

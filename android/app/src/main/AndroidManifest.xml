@@ -23,11 +23,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <activity
-            android:name=".ChallengeActivity"
-            android:label="Challenge Activity"
-            android:theme="@style/AppTheme">
-        </activity>
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
